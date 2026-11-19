@@ -36,13 +36,14 @@
   h1 span{font-size:.8em;color:var(--sub);margin-left:.4em}
   .savebtn{display:inline-flex;align-items:center;padding:8px 18px;border-radius:999px;background:var(--accent);color:var(--on-accent);font-weight:600;font-size:.9rem;white-space:nowrap;text-decoration:none}
   .savebtn:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
-  main{max-width:880px;margin:0 auto;padding-block:16px 40px}
+  main{max-width:880px;margin:0 auto;padding-block:16px 0}
   #msg{margin:0 0 16px;font-size:.85rem;color:var(--sub);min-height:1.5em}
-  #viewer{overflow-x:auto;-webkit-overflow-scrolling:touch}
-  #pages{display:grid;gap:20px;width:100%;margin:0 auto;padding-bottom:72px}
+  /* 表示枠は画面幅いっぱい。100%時は880px幅で中央、拡大時は画面全体を使って横スクロール */
+  #viewer{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-block:0 96px}
+  #pages{display:grid;gap:20px;width:min(880px,100%);margin:0 auto}
   #pages canvas{display:block;width:100%;height:auto;background:#fff;box-shadow:0 2px 14px var(--shadow);border-radius:3px}
   .loading{padding:64px 0;text-align:center;color:var(--sub)}
-  #fallback{width:100%;height:85vh;border:0}
+  #fallback{display:block;width:100%;max-width:880px;height:85vh;border:0;margin:0 auto}
   .zoom{position:fixed;z-index:8;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:2px;padding:4px;background:var(--surface);border:1px solid var(--line);border-radius:999px;box-shadow:0 4px 18px var(--shadow)}
   .zoom button{display:grid;place-items:center;min-width:44px;height:44px;padding:0 6px;border:0;border-radius:999px;background:transparent;color:var(--fg);font:inherit;font-size:.85rem;font-variant-numeric:tabular-nums;cursor:pointer}
   .zoom button:hover{background:var(--bg)}
@@ -64,9 +65,11 @@
 
 <main class="gutter">
   <p id="msg" role="status">パンフレットのダウンロードを開始しました。始まらない場合は右上の「パンフレットを保存」を押してください。</p>
-  <div id="viewer"><div id="pages"><div class="loading">読み込み中…</div></div></div>
-  <iframe id="fallback" title="パンフレット" hidden></iframe>
 </main>
+<div id="viewer" class="gutter">
+  <div id="pages"><div class="loading">読み込み中…</div></div>
+  <iframe id="fallback" title="パンフレット" hidden></iframe>
+</div>
 
 <div class="zoom" id="zoom" role="toolbar" aria-label="拡大・縮小" hidden>
   <button type="button" id="zout" aria-label="縮小" title="縮小">
@@ -100,7 +103,11 @@
       if (token !== renderToken) return;           // 新しい倍率が来たら中断
       const page = pdfPages[i];
       const base = page.getViewport({ scale: 1 });
-      const vp = page.getViewport({ scale: (cssW / base.width) * ratio });
+      let scale = (cssW / base.width) * ratio;
+      // iPhoneのSafariはキャンバスの面積に上限(約1670万px)があるため、それを超えないよう抑える
+      const MAX_AREA = 16e6;
+      if (base.width * base.height * scale * scale > MAX_AREA) scale = Math.sqrt(MAX_AREA / (base.width * base.height));
+      const vp = page.getViewport({ scale });
       const off = document.createElement("canvas");
       off.width = Math.floor(vp.width); off.height = Math.floor(vp.height);
       await page.render({ canvasContext: off.getContext("2d"), viewport: vp }).promise;
@@ -111,6 +118,12 @@
     }
   }
 
+  function applyWidth() {
+    const cs = getComputedStyle(viewer);
+    const avail = viewer.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    pages.style.width = Math.round(Math.min(880, avail) * STEPS[zi]) + "px";
+  }
+
   function setZoom(next) {
     next = Math.max(0, Math.min(STEPS.length - 1, next));
     // 画面中央に見えている位置を保ったまま倍率を変える
@@ -118,7 +131,7 @@
     const fx = (viewer.scrollLeft + viewer.clientWidth / 2) / Math.max(1, viewer.scrollWidth);
     zi = next;
     const z = STEPS[zi];
-    pages.style.width = (z * 100) + "%";
+    applyWidth();
     document.getElementById("zreset").textContent = Math.round(z * 100) + "%";
     document.getElementById("zout").disabled = zi === 0;
     document.getElementById("zin").disabled = zi === STEPS.length - 1;
@@ -131,7 +144,7 @@
   document.getElementById("zout").addEventListener("click", () => setZoom(zi - 1));
   document.getElementById("zreset").addEventListener("click", () => setZoom(2));
   let rw = innerWidth;
-  window.addEventListener("resize", () => { if (innerWidth !== rw) { rw = innerWidth; clearTimeout(setZoom.t); setZoom.t = setTimeout(draw, 200); } });
+  window.addEventListener("resize", () => { if (innerWidth !== rw) { rw = innerWidth; applyWidth(); clearTimeout(setZoom.t); setZoom.t = setTimeout(draw, 200); } });
 
   (async () => {
     try {
@@ -149,6 +162,7 @@
         pdfPages.push(page); canvases.push(c);
       }
       document.getElementById("zoom").hidden = false;
+      applyWidth();
       await draw();
     } catch (e) {
       pages.hidden = true;
